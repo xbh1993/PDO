@@ -21,7 +21,7 @@ class Db
     protected $_where = '';
     protected $_order = '';
     protected $_limit = '';
-    protected $_field = '';
+    protected $_field = '*';
     protected $_clear = 0;//状态，0表示查询田间干净，1表示查询条件污染
     protected $_trans = 0;//事务指令数
 
@@ -142,6 +142,12 @@ class Db
         return $this->_sql;
     }
 
+
+    /**新增数据
+     * @param $tbName 数据表名称
+     * @param $data //提交过来的数据
+     * @return mixed|void
+     */
     public function insert($tbName, $data)
     {
         $data = $this->_dataFormmat($tbName, $data);
@@ -150,16 +156,51 @@ class Db
         return $this->_doExec($sql);
     }
 
-    /**
-     * 删除方法
+    /**删除方法
+     * @param $tbName 数据表名称
+     * @return bool|mixed
      */
     public function delete($tbName)
     {
+        //防止全表删除
         if (!trim($this->_where)) return false;
         $sql = 'delete from ' . $tbName . $this->_where;
         $this->_clear = 1;
         $this->_clear();
         return $this->_doExec($sql);
+    }
+
+    /**查询语句
+     * @param string $tbName 数据表名称
+     * @return mixed
+     */
+    public function select($tbName = "")
+    {
+        $sql = 'select ' . trim($this->_field) . ' from ' . $tbName . $this->_where . ' ' . $this->_order . ' ' . $this->_limit;
+        $this->_clear = 1;
+        $this->_clear();
+        $res = $this->_doQuery($sql);
+        return $res;
+    }
+
+    /**  数据表的更新操作
+     * @param $tbName要更新的数据表名
+     * @param $data 更新的数据
+     * @return bool|mixed
+     */
+    public function update($tbName, $data)
+    {
+        if (!trim($this->_where)) return false;
+        $data = $this->_dataFormmat($tbName, $data);
+        if (!$data) return false;
+        $upArr = [];
+        foreach ($data as $k => $v) {
+            $upArr[] = $k . "=" . $v;
+        }
+        $str = implode(',', $upArr);
+        $sql = 'update ' . $tbName . ' set ' . trim($str) . ' ' . $this->_where;
+        $rows = $this->_doExec($sql);
+        return $rows;
     }
 
 
@@ -170,13 +211,15 @@ class Db
     public function where($option)
     {
         if ($this->_clear > 0) $this->_clear();
+        if (is_array($option) && empty($option)) return $this;
+        if (is_string($option) && empty(trim($option))) return $this;
         $this->_where = ' where ';
         if (is_string($option)) $this->_where .= $option;
         if (is_array($option)) {
             foreach ($option as $k => $v) {
                 if (!is_array($v)) {
                     $logic = 'and';
-                    $condition = '(' . $this->_addChar($k) . '=' . $v . ')';
+                    $condition = '(' . $this->_addChar($k) . '="' . $v . '")';
                 }
                 if (is_array($v)) {
                     $logic = $v[0];
@@ -190,6 +233,62 @@ class Db
         return $this;
     }
 
+
+    /** 排序操作
+     * @param $option要排序的字段 支持数组和字符串模式 ['field1'=>desc,'field2'=>.....]  ；filed1 desc ,field2 ....
+     * @return $this
+     */
+    public function order($option)
+    {
+        if ($this->_clear > 0) $this->_clear();
+        if (is_array($option) && empty($option)) return $this;
+        if (is_string($option) && empty(trim($option))) return $this;
+        $this->_order = 'order by ';
+        if (is_string($option)) {
+            $this->_order .= $option;
+        }
+        if (is_array($option)) {
+            foreach ($option as $k => $v) {
+                $order = $this->_addChar($k) . ' ' . $v;
+                $this->_order .= isset($mark) ? ' , ' . $order : $order;
+                $mark = 1;
+            }
+        }
+        return $this;
+    }
+
+    /**设置查询行数及页数
+     * @param $page 当pagesize不为null的时候 page为页数 否则为行数
+     * @param null $pagesize
+     */
+    public function limit($page, $pagesize = null)
+    {
+        if ($this->_clear > 0) $this->_clear();
+        if ($pagesize === null) {
+            $this->_limit = ' limit ' . $page;
+        } else {
+            $pageval = (intval($page) - 1) * $pagesize;
+            $this->_limit = ' limit ' . $pageval . ' , ' . $pagesize;
+        }
+        return $this;
+    }
+
+    /**设置查询字段
+     * @param $field 设置要查询的字段，支持数组和字符串
+     * @return $this
+     */
+    public function field($field)
+    {
+        if ($this->_clear > 0) $this->_clear();
+        if (is_string($field)) {
+            $arr = explode(',', $field);
+            $nfield = array_map(array($this, '_addChar'), $arr);//为数组arr中的每一个字都进行一次 _addChar() 函数的运算
+            $this->_field = implode(',', $nfield);
+            return $this;
+        }
+
+    }
+
     /*
      * 清楚标记的方法
      */
@@ -201,4 +300,38 @@ class Db
         $this->_field = "*";
         $this->_clear = 0;
     }
+
+
+    /**
+     * 开启事务处理
+     */
+    public function startTrans(){
+        if($this->_trans==0) self::$_dbh->beginTransaction();
+        $this->_trans++;
+        return;
+    }
+
+    /**事务回滚
+     * @return bool
+     */
+    public function rollBack(){
+        $result=true;
+        if($this->_trans>0){
+            $result=self::$_dbh->rollback();
+            $this->_trans=0;
+        }
+        return $result;
+    }
+
+    //事务处理的提交
+    public function commit(){
+        $result=true;
+        if($this->_trans>0){
+            $result=self::$_dbh->commit();
+            $this->_trans=0;
+        }
+        return $result;
+    }
+
+
 }
