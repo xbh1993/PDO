@@ -1,5 +1,5 @@
 <?php
-
+namespace core\lib;
 /**
  * Created by PhpStorm.
  * User: xiebh
